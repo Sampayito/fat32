@@ -28,6 +28,8 @@ int32_t RootDirSectors = 0;
 int32_t FirstDataSector = 0;
 int32_t FirstSectorofCluster = 0;
 
+FILE *fp = NULL;
+
 struct __attribute__((__packed__)) DirectoryEntry
 {
   char DIR_Name[11];
@@ -48,46 +50,36 @@ int LBAToOffset(int32_t sector)
   return ((sector - 2) * BPB_BytsPerSec) + (BPB_BytsPerSec * BPB_RsvdSecCnt) + (BPB_NumFATS * BPB_FATSz32 * BPB_BytsPerSec);
 }
 
-// int16_t NextLB(uint32_t sector)
-// {
-//   //My descr: looks up in the FAT; passing in current cluster, it provides the next cluster
-//   /*
-//     Purpose: Given a logical block address, look up into the first FAT and return the logical
-//     block address of the block in the file. If there is no further blocks, returns -1
-//   */
-  
-//   uint32_t FATAddress = (BPB_BytsPerSec * BPB_RsvdSecCnt) + (sector * 4);
-//   int16_t val;
-//   fseek(fp, FATAddress, SEEK_SET); //does this mean that i need the file while shell is running?
-//   fread(&val, 2, 1, fp); //used fd previously but I dont know where else id open it if not here
-//   return val;
-// }
-
-void tempfunc() //i think i should open before starting the inf loop and close once the loop exits?
+int32_t NextLB(uint32_t sector)
 {
-  FILE *fd = fopen("fat32.img", "r");
-  //error handling
-  fseek(fd, 11, SEEK_SET);
-  fread(&BPB_BytsPerSec, 2, 1, fd);
-  fread(&BPB_SecPerClus, 1, 1, fd);
-  fread(&BPB_RsvdSecCnt, 2, 1, fd);
-  fread(&BPB_NumFATS, 1, 1, fd);
-  fseek(fd, 36, SEEK_SET);
-  fread(&BPB_FATSz32, 4, 1, fd);
-  fread(&BPB_ExtFlags, 2, 1, fd);
-  fseek(fd, 44, SEEK_SET);
-  fread(&BPB_RootClus, 4, 1, fd);
-  fread(&BPB_FSInfo, 2, 1, fd);
-  fclose(fd);
+  //My descr: looks up in the FAT; passing in current cluster, it provides the next cluster
+  /*
+    Purpose: Given a logical block address, look up into the first FAT and return the logical
+    block address of the block in the file. If there is no further blocks, returns -1
+  */
+  
+  uint32_t FATAddress = (BPB_BytsPerSec * BPB_RsvdSecCnt) + (sector * 4);
+  int32_t val;
+  fseek(fp, FATAddress, SEEK_SET); //does this mean that i need the file while shell is running?
+  fread(&val, 2, 1, fp);
+  return val;
 }
 
 void info()
 {
-  //uint16_t BPB_BytsPerSec;
-  //FILE *fd = fopen("fat32.img", "r");
-  //error handling
-  //fseek(fd, 11, SEEK_SET);
-  //fread(&BPB_BytsPerSec, 2, 1, fd);
+  if (fp == NULL)
+  {
+    printf("Error\n");
+    return;
+  }
+
+  fseek(fp, 36, SEEK_SET);
+  fread(&BPB_FATSz32, 4, 1, fp);
+  fread(&BPB_ExtFlags, 2, 1, fp);
+  fseek(fp, 44, SEEK_SET);
+  fread(&BPB_RootClus, 4, 1, fp);
+  fread(&BPB_FSInfo, 2, 1, fp);
+
   printf("Name\t\tHex\tBase10\n");
   printf("BPB_BytsPerSec\t0x%x\t%d\n", BPB_BytsPerSec, BPB_BytsPerSec);
   printf("BPB_SecPerClus\t0x%x\t%d\n", BPB_SecPerClus, BPB_SecPerClus);
@@ -97,7 +89,51 @@ void info()
   printf("BPB_ExtFlags\t0x%x\t%d\n", BPB_ExtFlags, BPB_ExtFlags);
   printf("BPB_RootClus\t0x%x\t%d\n", BPB_RootClus, BPB_RootClus);
   printf("BPB_FSInfo\t0x%x\t%d\n", BPB_FSInfo, BPB_FSInfo);
-  //fclose(fd);
+}
+
+void open(char* filename)
+{
+  //access call to see if filename even exists
+  fp = fopen(filename, "r"); //maybe change to write later
+
+  if (fp == NULL)
+  {
+    perror("Error: ...");
+  }
+
+  //fread BPB values here?
+  fseek(fp, 11, SEEK_SET);
+  fread(&BPB_BytsPerSec, 2, 1, fp);
+  fread(&BPB_SecPerClus, 1, 1, fp);
+  fread(&BPB_RsvdSecCnt, 2, 1, fp);
+  fread(&BPB_NumFATS, 1, 1, fp);
+  fseek(fp, 36, SEEK_SET);
+  fread(&BPB_FATSz32, 4, 1, fp);
+
+  int offset = (BPB_NumFATS * BPB_FATSz32 * BPB_BytsPerSec) + (BPB_RsvdSecCnt * BPB_BytsPerSec);
+  fseek(fp, offset, SEEK_SET);
+  // for (int i = 0; i < 16; i++)
+  // {
+  //   fread(&dir[i], sizeof(struct DirectoryEntry), 16, fp);
+  // }
+  //can read all at once since its packed
+  //assumes root directory has 16 or fewer files, change to do while after most of assignment is complete
+  fread(&dir[0], sizeof(struct DirectoryEntry), 16, fp);
+
+  fclose(fp);
+}
+
+void ls()
+{
+  for (int i = 0; i < 16; i++) //use do while later
+  {
+    if (dir[i].DIR_Attr == 0x01 || dir[i].DIR_Attr == 0x10 || dir[i].DIR_Attr == 0x20)
+    {
+      char name[12];
+      memset(name, 0, 12);
+      printf("%s\n", name);
+    }
+  }
 }
 
 int main(int argc, char* argv[] )
@@ -106,7 +142,7 @@ int main(int argc, char* argv[] )
   char* command_string = (char*)malloc(MAX_COMMAND_SIZE); //holds user's input command
   char error_message[30] = "An error has occured\n";
 
-  tempfunc();
+  char* filename = "fat32.img";
 
   while(1)
   {
@@ -185,6 +221,23 @@ int main(int argc, char* argv[] )
         free(head_ptr);
         free(command_string);
         exit(0);
+      }
+      for (int i = 0; i < token_count; i++)
+      {
+        free(token[i]);
+      }
+      continue;
+    }
+
+    if (strcmp(token[0], "open") == 0)
+    {
+      if (token_count != 1)
+      {
+        write(STDERR_FILENO, error_message, strlen(error_message));
+      }
+      else
+      {
+        open(filename);
       }
       for (int i = 0; i < token_count; i++)
       {
