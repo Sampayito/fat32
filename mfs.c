@@ -28,7 +28,42 @@ int32_t RootDirSectors = 0;
 int32_t FirstDataSector = 0;
 int32_t FirstSectorofCluster = 0;
 
-void tempfunc()
+struct __attribute__((__packed__)) DirectoryEntry
+{
+  char DIR_Name[11];
+  uint8_t DIR_Attr;
+  uint8_t Unused1[8];
+  uint16_t DIR_FirstClusterHigh;
+  uint8_t Unused2[4];
+  uint16_t DIR_FirstClusterLow;
+  uint32_t DIR_FileSize;
+};
+
+struct DirectoryEntry dir[16];
+
+int LBAToOffset(int32_t sector)
+{
+  //My descr: used to figure out which address to fseek to given a cluster number
+  //Purpose: Finds the starting address of a block of data given the sector number
+  return ((sector - 2) * BPB_BytsPerSec) + (BPB_BytsPerSec * BPB_RsvdSecCnt) + (BPB_NumFATS * BPB_FATSz32 * BPB_BytsPerSec);
+}
+
+// int16_t NextLB(uint32_t sector)
+// {
+//   //My descr: looks up in the FAT; passing in current cluster, it provides the next cluster
+//   /*
+//     Purpose: Given a logical block address, look up into the first FAT and return the logical
+//     block address of the block in the file. If there is no further blocks, returns -1
+//   */
+  
+//   uint32_t FATAddress = (BPB_BytsPerSec * BPB_RsvdSecCnt) + (sector * 4);
+//   int16_t val;
+//   fseek(fp, FATAddress, SEEK_SET); //does this mean that i need the file while shell is running?
+//   fread(&val, 2, 1, fp); //used fd previously but I dont know where else id open it if not here
+//   return val;
+// }
+
+void tempfunc() //i think i should open before starting the inf loop and close once the loop exits?
 {
   FILE *fd = fopen("fat32.img", "r");
   //error handling
@@ -46,6 +81,25 @@ void tempfunc()
   fclose(fd);
 }
 
+void info()
+{
+  //uint16_t BPB_BytsPerSec;
+  //FILE *fd = fopen("fat32.img", "r");
+  //error handling
+  //fseek(fd, 11, SEEK_SET);
+  //fread(&BPB_BytsPerSec, 2, 1, fd);
+  printf("Name\t\tHex\tBase10\n");
+  printf("BPB_BytsPerSec\t0x%x\t%d\n", BPB_BytsPerSec, BPB_BytsPerSec);
+  printf("BPB_SecPerClus\t0x%x\t%d\n", BPB_SecPerClus, BPB_SecPerClus);
+  printf("BPB_RsvdSecCnt\t0x%x\t%d\n", BPB_RsvdSecCnt, BPB_RsvdSecCnt);
+  printf("BPB_NumFATS\t0x%x\t%d\n", BPB_NumFATS, BPB_NumFATS);
+  printf("BPB_FATSz32\t0x%x\t%d\n", BPB_FATSz32, BPB_FATSz32);
+  printf("BPB_ExtFlags\t0x%x\t%d\n", BPB_ExtFlags, BPB_ExtFlags);
+  printf("BPB_RootClus\t0x%x\t%d\n", BPB_RootClus, BPB_RootClus);
+  printf("BPB_FSInfo\t0x%x\t%d\n", BPB_FSInfo, BPB_FSInfo);
+  //fclose(fd);
+}
+
 int main(int argc, char* argv[] )
 {
 
@@ -56,7 +110,7 @@ int main(int argc, char* argv[] )
 
   while(1)
   {
-    printf ("mfs> "); //prints out the msh prompt
+    printf ("mfs> ");
 
     //reads the command from the command line
     //the while command will wait here until the user inputs something
@@ -146,23 +200,8 @@ int main(int argc, char* argv[] )
         write(STDERR_FILENO, error_message, strlen(error_message));
       }
       else
-      {//do info below////
-        //here
-        //uint16_t BPB_BytePerSec;
-        //FILE *fd = fopen("fat32.img", "r");
-        //error handling
-        //fseek(fd, 11, SEEK_SET);
-        //fread(&BPB_BytePerSec, 2, 1, fd);
-        printf("Name\t\tHex\tBase10\n");
-        printf("BPB_BytsPerSec\t0x%x\t%d\n", BPB_BytsPerSec, BPB_BytsPerSec);
-        printf("BPB_SecPerClus\t0x%x\t%d\n", BPB_SecPerClus, BPB_SecPerClus);
-        printf("BPB_RsvdSecCnt\t0x%x\t%d\n", BPB_RsvdSecCnt, BPB_RsvdSecCnt);
-        printf("BPB_NumFATS\t0x%x\t%d\n", BPB_NumFATS, BPB_NumFATS);
-        printf("BPB_FATSz32\t0x%x\t%d\n", BPB_FATSz32, BPB_FATSz32);
-        printf("BPB_ExtFlags\t0x%x\t%d\n", BPB_ExtFlags, BPB_ExtFlags);
-        printf("BPB_RootClus\t0x%x\t%d\n", BPB_RootClus, BPB_RootClus);
-        printf("BPB_FSInfo\t0x%x\t%d\n", BPB_FSInfo, BPB_FSInfo);
-        //fclose(fd);
+      {
+        info();
       }
       for (int i = 0; i < token_count; i++)
       {
