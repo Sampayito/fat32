@@ -63,8 +63,8 @@ int32_t NextLB(uint32_t sector)
   
   uint32_t FATAddress = (BPB_BytsPerSec * BPB_RsvdSecCnt) + (sector * 4);
   int32_t val;
-  fseek(fp, FATAddress, SEEK_SET); //does this mean that i need the file while shell is running?
-  fread(&val, 2, 1, fp);
+  fseek(fp, FATAddress, SEEK_SET);
+  fread(&val, 4, 1, fp);
   return val;
 }
 
@@ -92,7 +92,7 @@ void open(char* filename)
   //access call to see if filename even exists
   if (fp != NULL)
   {
-    perror("Error: File system image already open.\n");
+    printf("Error: File system image already open.\n");
     return;
   }
 
@@ -147,25 +147,117 @@ void ls()
 
   for (int i = 0; i < 16; i++) //use do while later
   {
+    if (dir[i].DIR_Name[0] == 0xe5)
+    {
+      continue;
+    }
+
     if (dir[i].DIR_Attr == 0x01 || dir[i].DIR_Attr == 0x10 || dir[i].DIR_Attr == 0x20)
     {
-      char name[12];
-      memset(name, 0, 12);
+      char name[9];
+      char ext[4];
+      memset(name, 0, sizeof(name));
+      memset(ext, 0, sizeof(ext));
 
-      strncpy(name, dir[i].DIR_Name, 11);
-      name[11] = '\0';
+      strncpy(name, dir[i].DIR_Name, 8);
+      strncpy(ext, dir[i].DIR_Name + 8, 3);
 
       //trims trailing spaces
-      for (int j = 10; j >= 0; j--) 
+      for (int j = 7; j >= 0; j--) 
       {
         if (name[j] == ' ')
         {
           name[j] = '\0';
         }
+        else
+        {
+          break;
+        }
+      }
+      for (int j = 2; j >= 0; j--) 
+      {
+        if (ext[j] == ' ')
+        {
+          ext[j] = '\0';
+        }
+        else
+        {
+          break;
+        }
       }
 
-      printf("%s\n", name);
+      if (ext[0] != '\0')
+      {
+        printf("%-8s%s\n", name, ext);
+      }
+      else
+      {
+        printf("%s\n", name);
+      }
     }
+  }
+}
+
+void cd(char *directory_name)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File image must be opened first.\n");
+    return;
+  }
+
+  if (directory_name == NULL)
+  {
+    printf("Error: No directory specified.\n");
+    return;
+  }
+
+  if (strcmp(directory_name, "..") == 0)
+  {
+    printf("HAVE NOT IMPLEMENTED YET\n");
+    return;
+  }
+  else
+  {
+    char expanded_name[12];
+    memset(expanded_name, ' ', 11);
+    expanded_name[11] = '\0';
+
+    strncpy(expanded_name, directory_name, strlen(directory_name));
+
+    for (int i = 0; i < 11; i++)
+    {
+      expanded_name[i] = toupper(expanded_name[i]);
+    }
+
+    int found = 0;
+    int dir_index = -1;
+
+    for (int i = 0; i < 16; i++)
+    {
+      if (strncmp(expanded_name, dir[i].DIR_Name, 11) == 0)
+      {
+        if (dir[i].DIR_Attr == 0x10)
+        {
+          found = 1;
+          dir_index = i;
+          break;
+        }
+      }
+    }
+
+    if (!found)
+    {
+      printf("Directory not found.\n");
+      return;
+    }
+
+    current_cluster = dir[dir_index].DIR_FirstClusterLow;
+
+    int offset = LBAToOffset(current_cluster);
+    fseek(fp, offset, SEEK_SET);
+
+    fread(&dir[0], sizeof(struct DirectoryEntry), 16, fp);
   }
 }
 
@@ -311,6 +403,17 @@ int main(int argc, char* argv[] )
       else
       {
         ls();
+      }
+    }
+    else if (strcmp(token[0], "cd") == 0)
+    {
+      if (token_count != 2)
+      {
+        printf("Error: Invalid command. Usage: cd <directory>\n");
+      }
+      else
+      {
+        cd(token[1]);
       }
     }
     
