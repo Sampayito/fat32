@@ -1,11 +1,12 @@
 #define _GNU_SOURCE
 
 #include <stdio.h> //printf(), fgets()
-#include <unistd.h> //write()
+//#include <unistd.h> //write()
 #include <stdlib.h> //malloc(), free(), exit()
 #include <errno.h>
 #include <string.h> //strlen(), strcpy(), strcmp()
 #include <stdint.h> //integer types with specific widths
+#include <ctype.h> //tolower()
 
 #define WHITESPACE " \t\n" //defines delimiters when splitting command line
 #define MAX_COMMAND_SIZE 255
@@ -27,6 +28,8 @@ int16_t BPB_FSInfo; //??? why was this not included in slides
 int32_t RootDirSectors = 0;
 int32_t FirstDataSector = 0;
 int32_t FirstSectorofCluster = 0;
+
+int32_t current_cluster;
 
 FILE *fp = NULL;
 
@@ -69,16 +72,9 @@ void info()
 {
   if (fp == NULL)
   {
-    printf("Error\n");
+    printf("Error: File not open.\n");
     return;
   }
-
-  fseek(fp, 36, SEEK_SET);
-  fread(&BPB_FATSz32, 4, 1, fp);
-  fread(&BPB_ExtFlags, 2, 1, fp);
-  fseek(fp, 44, SEEK_SET);
-  fread(&BPB_RootClus, 4, 1, fp);
-  fread(&BPB_FSInfo, 2, 1, fp);
 
   printf("Name\t\tHex\tBase10\n");
   printf("BPB_BytsPerSec\t0x%x\t%d\n", BPB_BytsPerSec, BPB_BytsPerSec);
@@ -94,43 +90,80 @@ void info()
 void open(char* filename)
 {
   //access call to see if filename even exists
-  fp = fopen(filename, "r"); //maybe change to write later
-
-  if (fp == NULL)
+  if (fp != NULL)
   {
-    perror("Error: ...");
+    perror("Error: File system image already open.\n");
+    return;
   }
 
-  //fread BPB values here?
+  fp = fopen(filename, "r"); //maybe change to write later
+  if (fp == NULL)
+  {
+    printf("Error: File system image not found.\n");
+  }
+
+  //read BPB values
   fseek(fp, 11, SEEK_SET);
   fread(&BPB_BytsPerSec, 2, 1, fp);
   fread(&BPB_SecPerClus, 1, 1, fp);
   fread(&BPB_RsvdSecCnt, 2, 1, fp);
   fread(&BPB_NumFATS, 1, 1, fp);
+  
   fseek(fp, 36, SEEK_SET);
   fread(&BPB_FATSz32, 4, 1, fp);
+  fread(&BPB_ExtFlags, 2, 1, fp);
+  fseek(fp, 44, SEEK_SET);
+  fread(&BPB_RootClus, 4, 1, fp);
+  fread(&BPB_FSInfo, 2, 1, fp);
 
-  int offset = (BPB_NumFATS * BPB_FATSz32 * BPB_BytsPerSec) + (BPB_RsvdSecCnt * BPB_BytsPerSec);
+  current_cluster = BPB_RootClus;
+
+  int offset = ((BPB_NumFATS * BPB_FATSz32 * BPB_BytsPerSec) + (BPB_RsvdSecCnt * BPB_BytsPerSec));
   fseek(fp, offset, SEEK_SET);
-  // for (int i = 0; i < 16; i++)
-  // {
-  //   fread(&dir[i], sizeof(struct DirectoryEntry), 16, fp);
-  // }
+
   //can read all at once since its packed
   //assumes root directory has 16 or fewer files, change to do while after most of assignment is complete
   fread(&dir[0], sizeof(struct DirectoryEntry), 16, fp);
+}
 
+void close()
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system not open.\n");
+    return;
+  }
   fclose(fp);
+  fp = NULL;
 }
 
 void ls()
 {
+  if (fp == NULL)
+  {
+    printf("Error: File system not open.\n");
+    return;
+  }
+
   for (int i = 0; i < 16; i++) //use do while later
   {
     if (dir[i].DIR_Attr == 0x01 || dir[i].DIR_Attr == 0x10 || dir[i].DIR_Attr == 0x20)
     {
       char name[12];
       memset(name, 0, 12);
+
+      strncpy(name, dir[i].DIR_Name, 11);
+      name[11] = '\0';
+
+      //trims trailing spaces
+      for (int j = 10; j >= 0; j--) 
+      {
+        if (name[j] == ' ')
+        {
+          name[j] = '\0';
+        }
+      }
+
       printf("%s\n", name);
     }
   }
@@ -140,9 +173,9 @@ int main(int argc, char* argv[] )
 {
 
   char* command_string = (char*)malloc(MAX_COMMAND_SIZE); //holds user's input command
-  char error_message[30] = "An error has occured\n";
+  //char error_message[30] = "An error has occured\n";
 
-  char* filename = "fat32.img";
+  //char* filename = "fat32.img"; //did this for now
 
   while(1)
   {
@@ -182,27 +215,34 @@ int main(int argc, char* argv[] )
     while (((argument_pointer = strsep(&working_string, WHITESPACE)) != NULL) && //while more tokens
               (token_count < MAX_NUM_ARGUMENTS - 1)) //reserving space for the NULL terminator
     {
-      //token[token_count] = strndup( argument_pointer, MAX_COMMAND_SIZE );
-      //if( strlen( token[token_count] ) == 0 )
       if(strlen(argument_pointer) > 0) //skip tokens that might result from consecutive delimiters
       //argument_pointer contains token obtained by strsep()
       {
         token[token_count] = strdup(argument_pointer); //duplicate token and store in token array
-        //token[token_count] = NULL;
         token_count++;
       }
-        //token_count++;
     }
-    token[token_count] = NULL; //has to be NULL terminated for execvp to work
+    token[token_count] = NULL;
+
+    //CHECK TO SEE IF PROBLEM ABOVE WITH MAXNUMARG - 1 LATER
 
 ////////////////////////////////////////////////////////////////////////////
     //prints the tokenized input as a debug check
-    int token_index  = 0;
-    for( token_index = 0; token_index < token_count; token_index ++ ) 
-    {
-      printf("token[%d] = %s\n", token_index, token[token_index] );  
-    }
+    // int token_index  = 0;
+    // for( token_index = 0; token_index < token_count; token_index ++ ) 
+    // {
+    //   printf("token[%d] = %s\n", token_index, token[token_index] );  
+    // }
 ///////^^this just prints tokens////////////////////////////////////////////
+
+    //for case insensitivity//
+    for (int i = 0; i < token_count; i++)
+    {
+      for (int j = 0; token[i][j]; j++)
+      {
+        token[i][j] = tolower(token[i][j]);
+      }
+    }
 
     if (token_count == 0) //skip if no tokens found and prompt user again
     {
@@ -214,10 +254,16 @@ int main(int argc, char* argv[] )
     {
       if (token_count != 1)
       {
-        write(STDERR_FILENO, error_message, strlen(error_message));
+        //write(STDERR_FILENO, error_message, strlen(error_message));
+        printf("too many args for quitting\n"); //temp msg
       }
       else
       {
+        if (fp != NULL)
+        {
+          fclose(fp);
+          fp = NULL;
+        }
         free(head_ptr);
         free(command_string);
         exit(0);
@@ -229,38 +275,43 @@ int main(int argc, char* argv[] )
       continue;
     }
 
-    if (strcmp(token[0], "open") == 0)
+    else if (strcmp(token[0], "open") == 0)
     {
-      if (token_count != 1)
+      if (token_count != 2)
       {
-        write(STDERR_FILENO, error_message, strlen(error_message));
+        printf("Error: File system image not found.\n");
       }
       else
       {
-        open(filename);
+        open(token[1]);
       }
-      for (int i = 0; i < token_count; i++)
-      {
-        free(token[i]);
-      }
-      continue;
     }
-
-    if (strcmp(token[0], "info") == 0)
+    else if (strcmp(token[0], "close") == 0)
+    {
+      close();
+    }
+    else if (strcmp(token[0], "info") == 0)
     {
       if (token_count != 1)
       {
-        write(STDERR_FILENO, error_message, strlen(error_message));
+        //write(STDERR_FILENO, error_message, strlen(error_message));
+        printf("too many args for info\n"); //temp msg
       }
       else
       {
         info();
       }
-      for (int i = 0; i < token_count; i++)
+    }
+    else if (strcmp(token[0], "ls") == 0)
+    {
+      if (token_count != 1)
       {
-        free(token[i]);
+        printf("too many args for ls\n"); //temp msg
       }
-      continue;
+      else
+      {
+        ls();
+      }
     }
     
     free(head_ptr); //frees memory allocated by strdup() for working_string
