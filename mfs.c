@@ -198,6 +198,59 @@ void ls()
   }
 }
 
+void stat(char *filename)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system not open.\n");
+    return;
+  }
+
+  char expanded_name[12];
+  memset(expanded_name, ' ', 11);
+  expanded_name[11] = '\0';
+
+  char *token = strtok(filename, ".");
+  if (token != NULL)
+  {
+    strncpy(expanded_name, token, strlen(token));
+    token = strtok(NULL, ".");
+    if (token != NULL)
+    {
+      strncpy((char*)(expanded_name + 8), token, strlen(token));
+    }
+  }
+  else
+  {
+    strncpy(expanded_name, filename, strlen(filename));
+  }
+
+  for (int i = 0; i < 11; i++)
+  {
+    expanded_name[i] = toupper(expanded_name[i]);
+  }
+
+  int found = 0;
+
+  for (int i = 0; i < 16; i++)
+  {
+    if (strncmp(expanded_name, dir[i].DIR_Name, 11) == 0)
+    {
+      found = 1;
+      printf("Attribute\tSize\tStarting Cluster Number\n");
+      printf("0x%x\t\t", dir[i].DIR_Attr);
+      printf("%d\t", dir[i].DIR_FileSize);
+      printf("%d\n", dir[i].DIR_FirstClusterLow);
+      break;
+    }
+  }
+
+  if (!found)
+  {
+    printf("Error: File not found\n");
+  }
+}
+
 void cd(char *directory_name)
 {
   if (fp == NULL)
@@ -403,6 +456,17 @@ int main(int argc, char* argv[] )
       else
       {
         ls();
+      }
+    }
+    else if (strcmp(token[0], "stat") == 0)
+    {
+      if (token_count != 2)
+      {
+        printf("Invalid command. Usage: stat <filename> (or <directory name>)\n");
+      }
+      else
+      {
+        stat(token[1]);
       }
     }
     else if (strcmp(token[0], "cd") == 0)
