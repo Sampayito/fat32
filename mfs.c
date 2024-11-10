@@ -71,7 +71,6 @@ int32_t NextLB(uint32_t sector)
 
 void expand_filename(char *filename, char *expanded_name)
 {
-  //char expanded_name[12];
   memset(expanded_name, ' ', 11);
   expanded_name[11] = '\0';
 
@@ -124,7 +123,7 @@ void open(char* filename)
     return;
   }
 
-  fp = fopen(filename, "r"); //maybe change to write later
+  fp = fopen(filename, "r+"); //maybe change to write later
   if (fp == NULL)
   {
     printf("Error: File system image not found.\n");
@@ -200,7 +199,8 @@ void ls(char *path)
 
   for (int i = 0; i < 16; i++) //use do while later
   {
-    if (temp_dir[i].DIR_Name[0] == 0xe5)
+    //if char is signed, it interprets 0xE5 as -27
+    if (((unsigned char)temp_dir[i].DIR_Name[0]) == 0xE5)
     {
       continue;
     }
@@ -261,28 +261,6 @@ void stat(char *filename)
 
   char expanded_name[12];
   expand_filename(filename, expanded_name);
-  // memset(expanded_name, ' ', 11);
-  // expanded_name[11] = '\0';
-
-  // char *token = strtok(filename, ".");
-  // if (token != NULL)
-  // {
-  //   strncpy(expanded_name, token, strlen(token));
-  //   token = strtok(NULL, ".");
-  //   if (token != NULL)
-  //   {
-  //     strncpy((char*)(expanded_name + 8), token, strlen(token));
-  //   }
-  // }
-  // else
-  // {
-  //   strncpy(expanded_name, filename, strlen(filename));
-  // }
-
-  // for (int i = 0; i < 11; i++)
-  // {
-  //   expanded_name[i] = toupper(expanded_name[i]);
-  // }
 
   int found = 0;
 
@@ -471,6 +449,93 @@ void read(char *filename, int position, int num_bytes, char *option)
   free(buffer);
 }
 
+void del(char *filename)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system image must be opened first.\n");
+    return;
+  }
+
+  char expanded_name[12];
+  expand_filename(filename, expanded_name);
+  
+  int found = 0;
+  int file_index = -1;
+
+  for (int i = 0; i < 16; i++)
+  {
+    if (strncmp(expanded_name, dir[i].DIR_Name, 11) == 0)
+    {
+      found = 1;
+      file_index = i;
+      break;
+    }
+  }
+
+  if (!found)
+  {
+    printf("Error: File not found.\n");
+    return;
+  }
+
+  dir[file_index].DIR_Name[0] = 0xE5; //marking found dir as deleted
+
+  //writing the directory entry back to the image
+  int offset = LBAToOffset(current_cluster) + file_index * sizeof(struct DirectoryEntry);
+  fseek(fp, offset, SEEK_SET);
+  fwrite(&dir[file_index], sizeof(struct DirectoryEntry), 1, fp);
+
+  printf("File deleted.\n");
+}
+
+void undel(char *filename)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system image must be opened first.\n");
+    return;
+  }
+
+  //making copy to not modify original
+  char temp_filename[MAX_COMMAND_SIZE];
+  strcpy(temp_filename, filename);
+
+  char expanded_name[12];
+  expand_filename(temp_filename, expanded_name);
+
+  expanded_name[0] = 0xE5; //setting first char 0xE5 to search for deleted entry
+
+  int found = 0;
+  int file_index = -1;
+
+  for (int i = 0; i < 16; i++)
+  {
+    if (strncmp(expanded_name, dir[i].DIR_Name, 11) == 0)
+    {
+      found = 1;
+      file_index = i;
+      break;
+    }
+  }
+
+  if (!found)
+  {
+    printf("Error: Deleted file not found.\n");
+    return;
+  }
+
+  //restoring first char using first char of filename provided
+  dir[file_index].DIR_Name[0] = toupper(filename[0]);
+
+  //writing directory entry back to the image
+  int offset = LBAToOffset(current_cluster) + file_index * sizeof(struct DirectoryEntry);
+  fseek(fp, offset, SEEK_SET);
+  fwrite(&dir[file_index], sizeof(struct DirectoryEntry), 1, fp);
+
+  printf("File undeleted.\n");
+}
+
 int main(int argc, char* argv[] )
 {
 
@@ -657,6 +722,28 @@ int main(int argc, char* argv[] )
       else
       {
         printf("Error: Invalid command. Usage: read <filename> <position> <number of bytes> [OPTION]\n");
+      }
+    }
+    else if (strcmp(token[0], "del") == 0)
+    {
+      if (token_count != 2)
+      {
+        printf("Error: Invalid command. Usage: del <filename>\n");
+      }
+      else
+      {
+        del(token[1]);
+      }
+    }
+    else if (strcmp(token[0], "undel") == 0)
+    {
+      if (token_count != 2)
+      {
+        printf("Error: Invalid command. Usage: undel <filename>\n");
+      }
+      else
+      {
+        undel(token[1]);
       }
     }
     
