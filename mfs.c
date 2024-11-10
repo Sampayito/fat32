@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 
 #include <stdio.h> //printf(), fgets()
-//#include <unistd.h> //write()
 #include <stdlib.h> //malloc(), free(), exit()
 #include <errno.h>
 #include <string.h> //strlen(), strcpy(), strcmp()
@@ -21,15 +20,17 @@ int8_t BPB_NumFATS;
 int16_t BPB_RootEntCnt;
 char BS_VolLab[11];
 int32_t BPB_FATSz32;
-int16_t BPB_ExtFlags; //??? same here
+int16_t BPB_ExtFlags;
 int32_t BPB_RootClus;
-int16_t BPB_FSInfo; //??? why was this not included in slides
+int16_t BPB_FSInfo;
 
 int32_t RootDirSectors = 0;
 int32_t FirstDataSector = 0;
 int32_t FirstSectorofCluster = 0;
 
 int32_t current_cluster;
+int32_t previous_cluster[50];
+int prev_cluster_count = 0;
 
 FILE *fp = NULL;
 
@@ -137,7 +138,7 @@ void close()
   fp = NULL;
 }
 
-void ls()
+void ls(char *path)
 {
   if (fp == NULL)
   {
@@ -145,22 +146,47 @@ void ls()
     return;
   }
 
+  int32_t target_cluster;
+
+  if (strcmp(path, ".") == 0)
+  {
+    target_cluster = current_cluster;
+  }
+  else if(strcmp(path, "..") == 0)
+  {
+    if (prev_cluster_count > 0)
+    {
+      target_cluster = previous_cluster[prev_cluster_count - 1];
+    }
+    else
+    {
+      printf("Error: No parent directory.\n");
+      return;
+    }
+  }
+
+  int offset = LBAToOffset(target_cluster);
+  fseek(fp, offset, SEEK_SET);
+
+  struct DirectoryEntry temp_dir[16];
+  fread(&temp_dir, sizeof(struct DirectoryEntry), 16, fp);
+
   for (int i = 0; i < 16; i++) //use do while later
   {
-    if (dir[i].DIR_Name[0] == 0xe5)
+    if (temp_dir[i].DIR_Name[0] == 0xe5)
     {
       continue;
     }
 
-    if (dir[i].DIR_Attr == 0x01 || dir[i].DIR_Attr == 0x10 || dir[i].DIR_Attr == 0x20)
+    if (temp_dir[i].DIR_Attr == 0x01 || temp_dir[i].DIR_Attr == 0x10 || temp_dir[i].DIR_Attr == 0x20)
     {
       char name[9];
       char ext[4];
       memset(name, 0, sizeof(name));
       memset(ext, 0, sizeof(ext));
 
-      strncpy(name, dir[i].DIR_Name, 8);
-      strncpy(ext, dir[i].DIR_Name + 8, 3);
+      strncpy(name, temp_dir[i].DIR_Name, 8);
+      strncpy(ext, temp_dir[i].DIR_Name + 8, 3);
 
       //trims trailing spaces
       for (int j = 7; j >= 0; j--) 
@@ -265,10 +291,27 @@ void cd(char *directory_name)
     return;
   }
 
-  if (strcmp(directory_name, "..") == 0)
+  if (strcmp(directory_name, ".") == 0)
   {
-    printf("HAVE NOT IMPLEMENTED YET\n");
+    printf("Already in current directory.\n");
     return;
+  }
+  else if(strcmp(directory_name, "..") == 0)
+  {
+    if (prev_cluster_count > 0)
+    {
+      current_cluster = previous_cluster[prev_cluster_count - 1];
+      prev_cluster_count--;
+
+      int offset = LBAToOffset(current_cluster);
+      fseek(fp, offset, SEEK_SET);
+
+      fread(&dir[0], sizeof(struct DirectoryEntry), 16, fp);
+    }
+    else
+    {
+      printf("Error: No parent directory.\n");
+    }
   }
   else
   {
@@ -304,7 +347,9 @@ void cd(char *directory_name)
       printf("Directory not found.\n");
       return;
     }
-
+    //please don't have more than 50 subdirectories :)
+    previous_cluster[prev_cluster_count] = current_cluster;
+    prev_cluster_count++;
     current_cluster = dir[dir_index].DIR_FirstClusterLow;
 
     int offset = LBAToOffset(current_cluster);
@@ -313,6 +358,7 @@ void cd(char *directory_name)
     fread(&dir[0], sizeof(struct DirectoryEntry), 16, fp);
   }
 }
+
 
 int main(int argc, char* argv[] )
 {
@@ -449,13 +495,17 @@ int main(int argc, char* argv[] )
     }
     else if (strcmp(token[0], "ls") == 0)
     {
-      if (token_count != 1)
+      if (token_count == 1)
       {
-        printf("too many args for ls\n"); //temp msg
+        ls(".");
+      }
+      else if (token_count == 2 && ((strcmp(token[1], ".") == 0) || strcmp(token[1], "..") == 0))
+      {
+        ls(token[1]);
       }
       else
       {
-        ls();
+        printf("Error: Invalid arguments for ls.\n");
       }
     }
     else if (strcmp(token[0], "stat") == 0)
