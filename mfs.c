@@ -69,11 +69,38 @@ int32_t NextLB(uint32_t sector)
   return val;
 }
 
+void expand_filename(char *filename, char *expanded_name)
+{
+  //char expanded_name[12];
+  memset(expanded_name, ' ', 11);
+  expanded_name[11] = '\0';
+
+  char *token = strtok(filename, ".");
+  if (token != NULL)
+  {
+    strncpy(expanded_name, token, strlen(token));
+    token = strtok(NULL, ".");
+    if (token != NULL)
+    {
+      strncpy((char*)(expanded_name + 8), token, strlen(token));
+    }
+  }
+  else
+  {
+    strncpy(expanded_name, filename, strlen(filename));
+  }
+
+  for (int i = 0; i < 11; i++)
+  {
+    expanded_name[i] = toupper(expanded_name[i]);
+  }
+}
+
 void info()
 {
   if (fp == NULL)
   {
-    printf("Error: File not open.\n");
+    printf("Error: File system image must be opened first.\n");
     return;
   }
 
@@ -228,33 +255,34 @@ void stat(char *filename)
 {
   if (fp == NULL)
   {
-    printf("Error: File system not open.\n");
+    printf("Error: File system image must be opened first.\n");
     return;
   }
 
   char expanded_name[12];
-  memset(expanded_name, ' ', 11);
-  expanded_name[11] = '\0';
+  expand_filename(filename, expanded_name);
+  // memset(expanded_name, ' ', 11);
+  // expanded_name[11] = '\0';
 
-  char *token = strtok(filename, ".");
-  if (token != NULL)
-  {
-    strncpy(expanded_name, token, strlen(token));
-    token = strtok(NULL, ".");
-    if (token != NULL)
-    {
-      strncpy((char*)(expanded_name + 8), token, strlen(token));
-    }
-  }
-  else
-  {
-    strncpy(expanded_name, filename, strlen(filename));
-  }
+  // char *token = strtok(filename, ".");
+  // if (token != NULL)
+  // {
+  //   strncpy(expanded_name, token, strlen(token));
+  //   token = strtok(NULL, ".");
+  //   if (token != NULL)
+  //   {
+  //     strncpy((char*)(expanded_name + 8), token, strlen(token));
+  //   }
+  // }
+  // else
+  // {
+  //   strncpy(expanded_name, filename, strlen(filename));
+  // }
 
-  for (int i = 0; i < 11; i++)
-  {
-    expanded_name[i] = toupper(expanded_name[i]);
-  }
+  // for (int i = 0; i < 11; i++)
+  // {
+  //   expanded_name[i] = toupper(expanded_name[i]);
+  // }
 
   int found = 0;
 
@@ -359,6 +387,89 @@ void cd(char *directory_name)
   }
 }
 
+void read(char *filename, int position, int num_bytes, char *option)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system image must be opened first.\n");
+    return;
+  }
+
+  char expanded_name[12];
+  expand_filename(filename, expanded_name);
+
+  int found = 0;
+  int file_index = -1;
+
+  for(int i = 0; i < 16; i++)
+  {
+    if (strncmp(expanded_name, dir[i].DIR_Name, 11) == 0)
+    {
+      found = 1;
+      file_index = i;
+      break;
+    }
+  }
+
+  if (!found)
+  {
+    printf("Error: File not found.\n");
+    return;
+  }
+
+  int32_t cluster = dir[file_index].DIR_FirstClusterLow;
+  int32_t file_size = dir[file_index].DIR_FileSize;
+
+  if (position >= file_size)
+  {
+    printf("Error: Position beyond file size.\n");
+    return;
+  }
+
+  //traversing to correct cluster
+  while (position >= BPB_BytsPerSec * BPB_SecPerClus)
+  {
+    cluster = NextLB(cluster);
+    if (cluster == -1)
+    {
+      printf("Error: Reached end of cluster chain.\n");
+      return;
+    }
+    position -= BPB_BytsPerSec * BPB_SecPerClus;
+  }
+
+  int offset = LBAToOffset(cluster) + position;
+  fseek(fp, offset, SEEK_SET);
+
+  //read specified number of bytes
+  unsigned char *buffer = malloc(num_bytes);
+  if (buffer == NULL)
+  {
+    printf("Error: Memory allocation failed.\n");
+    return;
+  }
+  fread(buffer, num_bytes, 1, fp);
+
+  //byte output based on option
+  for (int i = 0; i < num_bytes; i++)
+  {
+    if (option != NULL && strcmp(option, "-ascii") == 0)
+    {
+      printf("%c ", buffer[i]);
+    }
+    else if (option != NULL && strcmp(option, "-dec") == 0)
+    {
+      printf("%d ", buffer[i]);
+    }
+    else
+    {
+      printf("0x%x ", buffer[i]);
+    }
+  }
+  printf("\n");
+
+  free(buffer);
+}
 
 int main(int argc, char* argv[] )
 {
@@ -528,6 +639,24 @@ int main(int argc, char* argv[] )
       else
       {
         cd(token[1]);
+      }
+    }
+    else if (strcmp(token[0], "read") == 0)
+    {
+      if (token_count >= 4)
+      {
+        int position = atoi(token[2]);
+        int num_bytes = atoi(token[3]);
+        char *option = NULL;
+        if (token_count == 5)
+        {
+          option = token[4];
+        }
+        read(token[1], position, num_bytes, option);
+      }
+      else
+      {
+        printf("Error: Invalid command. Usage: read <filename> <position> <number of bytes> [OPTION]\n");
       }
     }
     
