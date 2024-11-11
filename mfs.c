@@ -1,3 +1,26 @@
+// The MIT License (MIT)
+// 
+// Copyright (c) 2024 Trevor Bakker 
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// 
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
 #define _GNU_SOURCE
 
 #include <stdio.h> //printf(), fgets()
@@ -123,7 +146,7 @@ void open(char* filename)
     return;
   }
 
-  fp = fopen(filename, "r+"); //maybe change to write later
+  fp = fopen(filename, "r+");
   if (fp == NULL)
   {
     printf("Error: File system image not found.\n");
@@ -536,20 +559,221 @@ void undel(char *filename)
   printf("File undeleted.\n");
 }
 
+void get(char *filename, char *new_filename)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system image must be opened first.\n");
+    return;
+  }
+
+  char expanded_name[12];
+  expand_filename(filename, expanded_name);
+
+  int found = 0;
+  int file_index = -1;
+
+  for(int i = 0; i < 16; i++)
+  {
+    if (strncmp(expanded_name, dir[i].DIR_Name, 11) == 0)
+    {
+      found = 1;
+      file_index = i;
+      break;
+    }
+  }
+
+  if (!found)
+  {
+    printf("Error: File not found.\n");
+    return;
+  }
+
+  if (new_filename == NULL)
+  {
+    new_filename = filename;
+  }
+
+  FILE *gfp = fopen(new_filename, "w"); //created in cwd
+  if (gfp == NULL)
+  {
+    printf("Error: Can't create output file.\n");
+    return;
+  }
+  
+  //retrieving file metadata
+  int32_t cluster = dir[file_index].DIR_FirstClusterLow;
+  int32_t file_size = dir[file_index].DIR_FileSize;
+  int bytes_remaining = file_size; //counter to check how many bytes left to copy
+
+  //buffer (which can hold data of one cluster) initialized for data transfer
+  unsigned char buffer[BPB_BytsPerSec * BPB_SecPerClus];
+
+  //loop to read and write fild data from fat32 to outout file
+  while (cluster != -1 && bytes_remaining > 0)
+  {
+    int offset = LBAToOffset(cluster); //byte offset within fat32 img
+    fseek(fp, offset, SEEK_SET);
+    int bytes_to_read;
+    if (bytes_remaining < BPB_BytsPerSec * BPB_SecPerClus)
+    //if bytes to copy are less than size of one cluster
+    {
+      bytes_to_read = bytes_remaining; //avoids reading beyond file's end
+    }
+    else
+    {
+      bytes_to_read = BPB_BytsPerSec * BPB_SecPerClus; //set to full cluster size
+    }
+
+    fread(buffer, bytes_to_read, 1, fp); //reads from image to buffer
+    fwrite(buffer, bytes_to_read, 1, gfp); //writes from buffer to new file
+
+    bytes_remaining -= bytes_to_read; //decreases counter
+
+    if (bytes_remaining > 0)
+    {
+      cluster = NextLB(cluster); //retrieves next cluster
+    }
+    else
+    {
+      break; //no bytes remaining
+    }
+  }
+
+  fclose(gfp);
+  printf("File '%s' copied to '%s'.\n", filename, new_filename);
+}
+
+void put(char *filename, char *new_filename)
+{
+  if (fp == NULL)
+  {
+    printf("Error: File system image must be opened first.\n");
+    return;
+  }
+
+  FILE *pfp = fopen(filename, "rb");
+  if (pfp == NULL)
+  {
+    printf("Error: Input file not found.\n");
+    return;
+  }
+
+  //determining the size of the input file
+  fseek(pfp, 0, SEEK_END);
+  long file_size = ftell(pfp);
+  fseek(pfp, 0, SEEK_SET);
+  int bytes_remaining = file_size;
+
+  if (new_filename == NULL)
+  {
+    new_filename = filename;
+  }
+
+  char expanded_name[12];
+  expand_filename(new_filename, expanded_name);
+
+  //looking for a free directory entry
+  int dir_index = -1;
+  for (int i = 0; i < 16; i++)
+  {
+    if (dir[i].DIR_Name[0] == 0x00 || dir[i].DIR_Name[0] == 0xE5)
+    {
+      dir_index = i;
+      break;
+    }
+  }
+  if (dir_index == -1)
+  {
+    printf("Error: No free directory entries.\n");
+    fclose(pfp);
+    return;
+  }
+
+  //variables for cluster handling
+  int32_t cluster = -1;
+  int bytes_per_cluster = BPB_BytsPerSec * BPB_SecPerClus;
+
+  unsigned char buffer[BPB_BytsPerSec * BPB_SecPerClus]; //for data transfer
+
+  //loop to read from input file and write to fat32 image
+  while (bytes_remaining > 0)
+  {
+    //read data from input file into buffer
+    int bytes_to_write;
+    if (bytes_remaining > bytes_per_cluster)
+    {
+      bytes_to_write = bytes_per_cluster; //can use when I figure out how to get mult. clusters to work
+    }
+    else
+    {
+      bytes_to_write = bytes_remaining;
+    }
+
+    //find empty cluster
+    cluster = -1;
+    for (int i = 2; i < (BPB_FATSz32 * BPB_BytsPerSec) / 4; i++)
+    {
+      uint32_t fat_entry_offset = BPB_RsvdSecCnt * BPB_BytsPerSec + i * 4;
+      fseek(fp, fat_entry_offset, SEEK_SET);
+      uint32_t fat_entry;
+      fread(&fat_entry, 4, 1, fp);
+      
+      if (fat_entry == 0x00000000) //free cluster
+      {
+        cluster = i;
+        break;
+      }
+    }
+    if (cluster == -1)
+    {
+      printf("Error: Not enough free clusters.\n");
+      fclose(pfp);
+      return;
+    }
+
+    //read data from file to buffer
+    fread(buffer, 1, bytes_to_write, pfp);
+
+    //write data to fat32
+    int offset = LBAToOffset(cluster);
+    fseek(fp, offset, SEEK_SET);
+    fwrite(buffer, 1, bytes_to_write, fp);
+
+    for (int i = 0; i < BPB_NumFATS; i++)
+    {
+      uint32_t fat_offset = BPB_RsvdSecCnt * BPB_BytsPerSec + i * BPB_FATSz32 * BPB_BytsPerSec + cluster * 4;
+      fseek(fp, fat_offset, SEEK_SET);
+      uint32_t end_of_chain = 0x0FFFFFFF;
+      fwrite(&end_of_chain, 4, 1, fp);
+    }
+
+    bytes_remaining -= bytes_to_write;
+  }
+
+  strncpy(dir[dir_index].DIR_Name, expanded_name, 11);
+  dir[dir_index].DIR_Attr = 0x20;
+  dir[dir_index].DIR_FirstClusterLow = cluster;
+  dir[dir_index].DIR_FileSize = file_size;
+
+  //writing updated directory back to FAT image
+  int offset = LBAToOffset(current_cluster) + dir_index * sizeof(struct DirectoryEntry);
+  fseek(fp, offset, SEEK_SET);
+  fwrite(&dir[dir_index], sizeof(struct DirectoryEntry), 1, fp);
+
+  fclose(pfp);
+  printf("File '%s' inserted as '%s'.\n", filename, new_filename);
+}
+
 int main(int argc, char* argv[] )
 {
 
   char* command_string = (char*)malloc(MAX_COMMAND_SIZE); //holds user's input command
-  //char error_message[30] = "An error has occured\n";
-
-  //char* filename = "fat32.img"; //did this for now
 
   while(1)
   {
     printf ("mfs> ");
 
-    //reads the command from the command line
-    //the while command will wait here until the user inputs something
     if (!fgets(command_string, MAX_COMMAND_SIZE, stdin))
     {
       break; //reached EOF
@@ -591,18 +815,7 @@ int main(int argc, char* argv[] )
     }
     token[token_count] = NULL;
 
-    //CHECK TO SEE IF PROBLEM ABOVE WITH MAXNUMARG - 1 LATER
-
-////////////////////////////////////////////////////////////////////////////
-    //prints the tokenized input as a debug check
-    // int token_index  = 0;
-    // for( token_index = 0; token_index < token_count; token_index ++ ) 
-    // {
-    //   printf("token[%d] = %s\n", token_index, token[token_index] );  
-    // }
-///////^^this just prints tokens////////////////////////////////////////////
-
-    //for case insensitivity//
+    //for case insensitivity
     for (int i = 0; i < token_count; i++)
     {
       for (int j = 0; token[i][j]; j++)
@@ -744,6 +957,36 @@ int main(int argc, char* argv[] )
       else
       {
         undel(token[1]);
+      }
+    }
+    else if (strcmp(token[0], "get") == 0)
+    {
+      if (token_count == 2)
+      {
+        get(token[1], NULL);
+      }
+      else if (token_count == 3)
+      {
+        get(token[1], token[2]);
+      }
+      else
+      {
+        printf("Error: Invalid command. Usage: get <filename> [newfilename]\n");
+      }
+    }
+    else if (strcmp(token[0], "put") == 0)
+    {
+      if (token_count == 2)
+      {
+        put(token[1], NULL);
+      }
+      else if (token_count == 3)
+      {
+        put(token[1], token[2]);
+      }
+      else
+      {
+        printf("Error: Invalid command. Usage: put <filename> [newfilename]\n");
       }
     }
     
